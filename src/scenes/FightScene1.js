@@ -13,32 +13,47 @@ import {
   MashConfig,
   HP,
 } from '../configs/constants.js';
-
-// ─── Color palette ──────────────────────────────────────────
-const COLOR_BOSS_DEFAULT = 0xc0392b;
-const COLOR_BOSS_VULNERABLE = 0xf39c12;
-const COLOR_BOSS_HIT = 0xffffff;
-const COLOR_BOSS_PHASE2 = 0x8e44ad;
-const COLOR_BOSS_FEINT = 0x27ae60;
-
-// Hitbox colors: ORANGE for dodge (L/R), BLUE for parry (Full)
-const COLOR_HB_DODGE = 0xe67e22; // orange
-const COLOR_HB_PARRY = 0x3498db; // blue
+import {
+  PlayerSprites,
+  Boss1Sprites,
+  Boss2Sprites,
+  Backgrounds,
+  Tints,
+  PlayerPosition,
+  BossPosition,
+} from '../configs/sprites.js';
 
 export class FightScene1 extends Phaser.Scene {
   constructor() {
     super({ key: 'FightScene1' });
   }
 
-  preload() {}
+  // ─────────────────────────────────────────────────────────────
+  // PRELOAD — all sprites from GitHub
+  // ─────────────────────────────────────────────────────────────
+  preload() {
+    console.log('[FightScene1] preload() — loading from GitHub');
 
+    // Backgrounds
+    Object.values(Backgrounds).forEach((bg) =>
+      this.load.image(bg.key, bg.path)
+    );
+
+    // All sprite sets
+    [PlayerSprites, Boss1Sprites, Boss2Sprites].forEach((spriteSet) => {
+      Object.values(spriteSet).forEach((s) => this.load.image(s.key, s.path));
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // CREATE
+  // ─────────────────────────────────────────────────────────────
   create() {
     console.log('[FightScene1] create() called');
-    // Force re-enable keyboard — it was disabled during game over
     this.input.keyboard.enabled = true;
     console.log('[FightScene1] keyboard enabled:', this.input.keyboard.enabled);
 
-    // Clean up overlay scenes if they exist from a prior run
+    // Clean up overlay scenes from prior runs
     if (this.scene.get('GameOverScene')) {
       this.scene.remove('GameOverScene');
       console.log('[FightScene1] cleaned up GameOverScene');
@@ -48,48 +63,37 @@ export class FightScene1 extends Phaser.Scene {
       console.log('[FightScene1] cleaned up GameWonScene');
     }
 
+    // ─── Track current phase for sprite prefixing ─────────────
+    this.currentPhase = 1;
+    this.bossPrefix = 'boss1';
+
     // ─── Background ────────────────────────────────────────────
-    this.add.rectangle(400, 300, 800, 600, 0x1e1b3a).setDepth(0);
+    this.background = this.add
+      .image(400, 300, Backgrounds.phase1.key)
+      .setDepth(0)
+      .setDisplaySize(800, 600);
 
-    // ─── Boss placeholder ──────────────────────────────────────
-    this.bossDefaultColor = COLOR_BOSS_DEFAULT;
+    // ─── Boss sprite ───────────────────────────────────────────
+    this.bossBaseX = BossPosition.x;
+    this.bossBaseY = BossPosition.y;
     this.bossSprite = this.add
-      .rectangle(400, 220, 280, 320, this.bossDefaultColor)
-      .setDepth(1)
-      .setStrokeStyle(2, 0x000000);
-    this.bossLabel = this.add
-      .text(400, 220, 'BOSS', {
-        fontSize: '20px',
-        fontFamily: 'monospace',
-        fontStyle: 'bold',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5)
-      .setDepth(2);
+      .sprite(this.bossBaseX, this.bossBaseY, Boss1Sprites.idle.key)
+      .setDepth(BossPosition.depth)
+      .setOrigin(BossPosition.originX, BossPosition.originY)
+      .setScale(Boss1Sprites.idle.scale);
 
-    this.bossBaseX = 400;
-    this.bossBaseY = 220;
-
-    // ─── Player placeholder ────────────────────────────────────
+    // ─── Player sprite ─────────────────────────────────────────
     this.playerSprite = this.add
-      .rectangle(400, 510, 180, 160, 0x2980b9)
-      .setDepth(3)
-      .setStrokeStyle(2, 0x000000);
-    this.add
-      .text(400, 510, 'PLAYER', {
-        fontSize: '16px',
-        fontFamily: 'monospace',
-        fontStyle: 'bold',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5)
-      .setDepth(4);
+      .sprite(PlayerPosition.x, PlayerPosition.y, PlayerSprites.idle.key)
+      .setDepth(PlayerPosition.depth)
+      .setOrigin(PlayerPosition.originX, PlayerPosition.originY)
+      .setScale(PlayerSprites.idle.scale);
 
-    // ─── Hitbox indicators (color-coded) ──────────────────────
-    // Left/Right = ORANGE (dodge), Full = BLUE (parry)
-    this.hitboxLeft = this.makeHitbox(310, 380, COLOR_HB_DODGE);
-    this.hitboxRight = this.makeHitbox(490, 380, COLOR_HB_DODGE);
-    this.hitboxFull = this.makeHitbox(400, 380, COLOR_HB_PARRY);
+    // ─── Hitbox indicators — above boss head, small and punchy ──
+    const hbY = 95; // above the boss
+    this.hitboxLeft = this.makeHitbox(340, hbY, 0xe67e22);
+    this.hitboxRight = this.makeHitbox(460, hbY, 0xe67e22);
+    this.hitboxFull = this.makeHitbox(400, hbY, 0x3498db);
     this.allHitboxes = [this.hitboxLeft, this.hitboxRight, this.hitboxFull];
 
     // ─── HUD ───────────────────────────────────────────────────
@@ -114,7 +118,8 @@ export class FightScene1 extends Phaser.Scene {
     this.attachBossHooks(this.boss);
 
     this.gameOver = false;
-    this._nextActionTimer = null; // track scheduled boss action to prevent stacking
+    this._nextActionTimer = null;
+    this._attackAnimCount = 0; // alternate between attack1/attack2
 
     // ─── Input ─────────────────────────────────────────────────
     this.keys = this.input.keyboard.addKeys({
@@ -123,7 +128,6 @@ export class FightScene1 extends Phaser.Scene {
       space: Phaser.Input.Keyboard.KeyCodes.SPACE,
     });
 
-    // Use IDLE_BEFORE_COMBO_MS for the initial boot delay
     this.scheduleNextBossAction(Timing.IDLE_BEFORE_COMBO_MS);
     console.log(
       '[FightScene1] create() finished. gameOver:',
@@ -136,17 +140,49 @@ export class FightScene1 extends Phaser.Scene {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // HITBOX FACTORY — now color-coded
+  // SPRITE HELPERS — scales come from sprites.js
+  // ─────────────────────────────────────────────────────────────
+
+  /** Set boss sprite texture + correct scale from sprites.js. */
+  setBossTexture(stateName) {
+    const spriteSet = this.currentPhase === 1 ? Boss1Sprites : Boss2Sprites;
+    const entry = spriteSet[stateName];
+    if (entry && this.textures.exists(entry.key)) {
+      this.bossSprite.setTexture(entry.key);
+      this.bossSprite.setScale(entry.scale);
+    } else {
+      console.warn(
+        '[FightScene1] boss texture not found:',
+        stateName,
+        'phase:',
+        this.currentPhase
+      );
+    }
+  }
+
+  /** Set player sprite texture + correct scale from sprites.js. */
+  setPlayerTexture(name) {
+    const entry = PlayerSprites[name];
+    if (entry && this.textures.exists(entry.key)) {
+      this.playerSprite.setTexture(entry.key);
+      this.playerSprite.setScale(entry.scale);
+    } else {
+      console.warn('[FightScene1] player texture not found:', name);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // HITBOX FACTORY
   // ─────────────────────────────────────────────────────────────
   makeHitbox(x, y, color) {
     const box = this.add
-      .rectangle(x, y, 70, 70, color, 0.6)
+      .rectangle(x, y, 40, 40, color, 0.6)
       .setStrokeStyle(2, 0x000000)
       .setDepth(5)
       .setVisible(false);
     const mark = this.add
       .text(x, y, '!', {
-        fontSize: '40px',
+        fontSize: '28px',
         fontFamily: 'monospace',
         fontStyle: 'bold',
         color: '#ffffff',
@@ -164,7 +200,6 @@ export class FightScene1 extends Phaser.Scene {
     if (attackType === AttackType.ATTACK_RIGHT) target = this.hitboxRight;
     if (attackType === AttackType.ATTACK_FULL) target = this.hitboxFull;
     if (target) {
-      // Store which hitbox is active so stretch can reveal it
       this._activeHitbox = target;
       console.log('[FightScene1] hitbox armed:', attackType);
     }
@@ -181,248 +216,265 @@ export class FightScene1 extends Phaser.Scene {
     this._activeHitbox = null;
   }
 
-  /** Reveal the armed hitbox — box + white "!" appear as a 200ms heads-up. */
   revealHitbox(attackType) {
     const target = this._activeHitbox;
     if (target) {
       target.box.setVisible(true);
       target.mark.setVisible(true);
-      target.mark.setColor('#ffffff'); // white first, turns green on stretch
+      target.mark.setColor('#2ecc71');
     }
   }
 
   // ─────────────────────────────────────────────────────────────
-  // BOSS LEAN — directional movement during windup
-  // The boss physically shifts toward the attack direction.
-  // This gives each attack a UNIQUE visual telegraph.
+  // BOSS LEAN — directional movement + sprite swap
   // ─────────────────────────────────────────────────────────────
   playBossLean(attackType) {
     let targetX = this.bossBaseX;
     let targetY = this.bossBaseY;
-    let scaleX = 1;
-    let scaleY = 1;
 
     if (attackType === AttackType.ATTACK_LEFT) {
-      targetX = this.bossBaseX - 50; // lean left
-      scaleX = 0.9;
-      scaleY = 1.05;
+      this.setBossTexture('lean');
+      this.bossSprite.setFlipX(false);
+      targetX = this.bossBaseX - 50;
     } else if (attackType === AttackType.ATTACK_RIGHT) {
-      targetX = this.bossBaseX + 50; // lean right
-      scaleX = 0.9;
-      scaleY = 1.05;
+      this.setBossTexture('lean');
+      this.bossSprite.setFlipX(true); // mirror for right
+      targetX = this.bossBaseX + 50;
     } else if (attackType === AttackType.ATTACK_FULL) {
-      targetY = this.bossBaseY - 30; // rear back (up)
-      scaleX = 1.15;
-      scaleY = 0.85;
+      this.setBossTexture('squash'); // rears back using squash pose
+      this.bossSprite.setFlipX(false);
+      targetY = this.bossBaseY - 20;
     }
 
-    // Lean holds for the full windup
     this.tweens.add({
       targets: this.bossSprite,
       x: targetX,
       y: targetY,
-      scaleX: scaleX,
-      scaleY: scaleY,
       duration: Timing.WINDUP_MS * 0.6,
       ease: 'Sine.easeOut',
     });
 
-    // Boss label follows
-    this.tweens.add({
-      targets: this.bossLabel,
-      x: targetX,
-      y: targetY,
-      duration: Timing.WINDUP_MS * 0.6,
-      ease: 'Sine.easeOut',
-    });
-
-    console.log(
-      '[FightScene1] playBossLean:',
-      attackType,
-      '→ x:',
-      targetX,
-      'y:',
-      targetY
-    );
+    console.log('[FightScene1] playBossLean:', attackType);
   }
 
   // ─────────────────────────────────────────────────────────────
-  // SQUASH — anticipation at end of windup (boss "loads" the punch)
+  // SQUASH — anticipation at end of windup
   // ─────────────────────────────────────────────────────────────
   playSquashAnim(attackType) {
-    const currentX = this.bossSprite.x;
+    this.setBossTexture('squash');
     const currentY = this.bossSprite.y;
 
     this.tweens.add({
       targets: this.bossSprite,
-      scaleX: '+=0.20',
-      scaleY: '-=0.25',
-      y: currentY + 20,
+      scaleX: '+=0.15',
+      scaleY: '-=0.15',
+      y: currentY + 15,
       duration: 180,
       yoyo: true,
       ease: 'Sine.easeInOut',
     });
 
-    // Hitbox pull-back
-    let target = null;
-    let dx = 0;
-    if (attackType === AttackType.ATTACK_LEFT) {
-      target = this.hitboxLeft;
-      dx = +15;
-    }
-    if (attackType === AttackType.ATTACK_RIGHT) {
-      target = this.hitboxRight;
-      dx = -15;
-    }
-    if (attackType === AttackType.ATTACK_FULL) {
-      target = this.hitboxFull;
-      dx = 0;
-    }
-
-    if (target) {
-      this.tweens.add({
-        targets: [target.box, target.mark],
-        x: target.baseX + dx,
-        y: target.baseY + 12,
-        scaleX: 0.8,
-        scaleY: 0.8,
-        duration: 180,
-        yoyo: true,
-        ease: 'Sine.easeInOut',
-      });
-    }
-
     console.log('[FightScene1] playSquashAnim:', attackType);
   }
 
   // ─────────────────────────────────────────────────────────────
-  // STRETCH — THE STRIKE. Boss lunges forward and holds.
-  // "!" appears GREEN during this window = press NOW.
-  // Boss stays extended until onAttackResolve snaps it back.
+  // STRIKE — sprite swap IS the dodge signal. Boss snaps to attack
+  // sprite and lunges. Stays extended until resolve.
   // ─────────────────────────────────────────────────────────────
-  playStretchAnim(attackType) {
-    let lungeX = this.bossBaseX;
+  playStrikeAnim(attackType) {
     let lungeDX = 0;
-    if (attackType === AttackType.ATTACK_LEFT) lungeDX = -50;
-    if (attackType === AttackType.ATTACK_RIGHT) lungeDX = +50;
+    if (attackType === AttackType.ATTACK_LEFT) {
+      this.setBossTexture('lateral');
+      this.bossSprite.setFlipX(false);
+      lungeDX = -40;
+    } else if (attackType === AttackType.ATTACK_RIGHT) {
+      this.setBossTexture('lateral');
+      this.bossSprite.setFlipX(true);
+      lungeDX = +40;
+    } else if (attackType === AttackType.ATTACK_FULL) {
+      this.setBossTexture('lunge');
+      this.bossSprite.setFlipX(false);
+    }
 
-    // Boss lunges forward — NO yoyo, stays extended
+    // Quick lunge from current position — stays extended
     this.tweens.add({
-      targets: [this.bossSprite, this.bossLabel],
-      x: lungeX + lungeDX,
-      y: this.bossBaseY + 35,
-      scaleX: 0.8,
-      scaleY: 1.35,
-      duration: 150,
+      targets: this.bossSprite,
+      x: this.bossBaseX + lungeDX,
+      y: this.bossBaseY + 25,
+      duration: 120,
       ease: 'Power2',
     });
 
-    // Hitbox lunges in strike direction + scales up
-    let target = null;
-    let dx = 0;
-    if (attackType === AttackType.ATTACK_LEFT) {
-      target = this.hitboxLeft;
-      dx = -45;
-    }
-    if (attackType === AttackType.ATTACK_RIGHT) {
-      target = this.hitboxRight;
-      dx = +45;
-    }
-    if (attackType === AttackType.ATTACK_FULL) {
-      target = this.hitboxFull;
-      dx = 0;
-    }
-
-    if (target) {
-      // Both box AND "!" appear NOW — this is the dodge/parry window
-      target.box.setVisible(true);
-      target.mark.setVisible(true);
-      target.mark.setColor('#2ecc71');
-
-      this.tweens.add({
-        targets: [target.box, target.mark],
-        x: target.baseX + dx,
-        y: target.baseY - 15,
-        scaleX: 1.5,
-        scaleY: 1.5,
-        duration: 150,
-        ease: 'Power2',
-      });
-    }
-
-    console.log('[FightScene1] playStretchAnim (STRIKE):', attackType);
+    console.log('[FightScene1] playStrikeAnim:', attackType);
   }
 
   // ─────────────────────────────────────────────────────────────
-  // RESET BOSS POSITION — snap back to neutral
+  // RESET BOSS POSITION
   // ─────────────────────────────────────────────────────────────
   resetBossPosition() {
+    this.setBossTexture('idle');
+    this.bossSprite.setFlipX(false);
+    this.bossSprite.clearTint();
+    const idleScale = (this.currentPhase === 1 ? Boss1Sprites : Boss2Sprites)
+      .idle.scale;
     this.tweens.add({
-      targets: [this.bossSprite, this.bossLabel],
+      targets: this.bossSprite,
       x: this.bossBaseX,
       y: this.bossBaseY,
-      scaleX: 1,
-      scaleY: 1,
+      scaleX: idleScale,
+      scaleY: idleScale,
       duration: 150,
       ease: 'Sine.easeOut',
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // PLAYER SPRITE UPDATES
+  // ─────────────────────────────────────────────────────────────
+  showPlayerDodge(direction) {
+    // Don't animate yet — store the dodge, it plays when the strike fires
+    this._pendingDodge = direction;
+    // Immediately swap to dodge sprite (subtle visual feedback)
+    this.setPlayerTexture('dodge');
+    this.playerSprite.setFlipX(direction === 'LEFT');
+  }
+
+  /** Plays the actual dodge movement — synced to when the boss strike fires. */
+  executePlayerDodge(direction) {
+    this.setPlayerTexture('dodge');
+    this.playerSprite.setFlipX(direction === 'LEFT');
+
+    const dodgeX =
+      direction === 'LEFT' ? PlayerPosition.x - 120 : PlayerPosition.x + 120;
+
+    this.tweens.add({
+      targets: this.playerSprite,
+      x: dodgeX,
+      duration: 120,
+      ease: 'Power2',
+      onComplete: () => {
+        // Slide back to center
+        this.tweens.add({
+          targets: this.playerSprite,
+          x: PlayerPosition.x,
+          duration: 300,
+          ease: 'Sine.easeOut',
+        });
+      },
+    });
+  }
+
+  showPlayerParry() {
+    // Parry stored as pending for sync
+    this._pendingDodge = 'PARRY';
+    this.setPlayerTexture('parry');
+    this.playerSprite.setFlipX(false);
+  }
+
+  /** Plays the parry brace — synced to when the boss strike fires. */
+  executePlayerParry() {
+    this.setPlayerTexture('parry');
+    this.playerSprite.setFlipX(false);
+    // Small brace forward — absorbing the hit
+    this.tweens.add({
+      targets: this.playerSprite,
+      y: PlayerPosition.y - 15,
+      duration: 80,
+      yoyo: true,
+      ease: 'Power2',
+    });
+  }
+
+  showPlayerAttack() {
+    this._attackAnimCount = (this._attackAnimCount + 1) % 2;
+    this.setPlayerTexture(this._attackAnimCount === 0 ? 'attack1' : 'attack2');
+    this.playerSprite.setFlipX(false);
+  }
+
+  showPlayerStagger() {
+    this.setPlayerTexture('stagger');
+    this.playerSprite.setFlipX(false);
+    // Red blink to visualize damage
+    this.playerSprite.setTint(0xff0000);
+    this.tweens.add({
+      targets: this.playerSprite,
+      alpha: 0.4,
+      duration: 80,
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => {
+        this.playerSprite.setAlpha(1);
+        this.playerSprite.clearTint();
+      },
+    });
+  }
+
+  showPlayerIdle() {
+    this.setPlayerTexture('idle');
+    this.playerSprite.setFlipX(false);
   }
 
   // ─────────────────────────────────────────────────────────────
   // BOSS HOOKS
   // ─────────────────────────────────────────────────────────────
   attachBossHooks(boss) {
-    // ─── WINDUP START ──────────────────────────────────────────
     boss.onWindupStart = (attackType) => {
       console.log('[FightScene1] onWindupStart:', attackType);
-
       this.showHitbox(attackType);
       this.statusText.setText(`TELEGRAPH: ${attackType}`);
-
-      // Boss leans in the direction of the coming attack (holds through windup)
+      // Lean only — squash happens in attack window
       this.playBossLean(attackType);
-
-      // Squash animation peaks near the end of windup
-      const squashDuration = 360;
-      const squashDelay = Math.max(0, Timing.WINDUP_MS - squashDuration);
-      this.time.delayedCall(squashDelay, () => {
-        if (
-          this.boss === boss &&
-          boss.enemyCombatState === EnemyState.PARRIABLE
-        ) {
-          this.playSquashAnim(attackType);
-        }
-      });
     };
 
-    // ─── ATTACK WINDOW OPEN ────────────────────────────────────
     boss.onAttackActive = (attackType) => {
       console.log('[FightScene1] onAttackActive:', attackType);
       this.statusText.setText(`ATTACK: ${attackType}`);
       this.player.onBossAttackStart();
+      this.showPlayerIdle();
+      this._pendingDodge = null; // clear any pending dodge visual
 
-      // FEINT: boss turns green
       if (attackType === AttackType.FEINT) {
-        this.bossSprite.setFillStyle(COLOR_BOSS_FEINT);
-        this.resetBossPosition();
-        return; // no stretch for feints
+        this.setBossTexture(this.currentPhase === 2 ? 'feint' : 'idle');
+        this.bossSprite.setTint(Tints.FEINT);
+        this.bossSprite.setFlipX(false);
+        this.tweens.add({
+          targets: this.bossSprite,
+          x: this.bossBaseX,
+          y: this.bossBaseY,
+          duration: 150,
+          ease: 'Sine.easeOut',
+        });
+        return;
       }
 
-      // Box + "!" appear AT the dodge window — same moment as the stretch.
-      // One unified "press NOW" signal, no early preview.
-      const windowMs = Timing.ATTACK_WINDOW_MS;
-      const stretchDelay = Math.max(0, windowMs - Timing.DODGE_WINDOW_MS);
+      // SQUASH + HITBOX immediately — this IS the dodge window
+      this.playSquashAnim(attackType);
+      this.revealHitbox(attackType);
 
-      this.time.delayedCall(stretchDelay, () => {
+      const windowMs = Timing.ATTACK_WINDOW_MS;
+      const dodgeEnd = windowMs - Timing.DODGE_WINDOW_MS; // 400ms in = squash ends
+
+      // STRIKE — boss attack sprite snaps in, and any pending dodge plays
+      this.time.delayedCall(dodgeEnd, () => {
         if (this.boss === boss && boss.enemyCombatState === EnemyState.ATTACK) {
-          this.revealHitbox(attackType);
-          this.playStretchAnim(attackType);
-          console.log('[FightScene1] dodge window open at', stretchDelay, 'ms');
+          this.hideAllHitboxes();
+          this.playStrikeAnim(attackType);
+
+          // If player committed a dodge/parry during squash, NOW we animate it
+          if (this._pendingDodge) {
+            if (this._pendingDodge === 'PARRY') {
+              this.executePlayerParry();
+            } else {
+              this.executePlayerDodge(this._pendingDodge);
+            }
+            this._pendingDodge = null;
+          }
+
+          console.log('[FightScene1] strike fired at', dodgeEnd, 'ms');
         }
       });
     };
 
-    // ─── IMPACT MOMENT ─────────────────────────────────────────
     boss.onResolveImpact = (attackType) => {
       console.log('[FightScene1] onResolveImpact:', attackType);
       const now = this.time.now;
@@ -436,6 +488,11 @@ export class FightScene1 extends Phaser.Scene {
             ? Damage.PLAYER_MISS_PARRY
             : Damage.PLAYER_HIT_TAKES;
         this.player.perdeVida(dmg);
+        this.showPlayerStagger();
+        // Return to idle after stagger
+        this.time.delayedCall(Timing.PLAYER_STAGGER_MS, () => {
+          if (!this.gameOver) this.showPlayerIdle();
+        });
         console.log(
           '[FightScene1] player hit! dmg:',
           dmg,
@@ -444,54 +501,63 @@ export class FightScene1 extends Phaser.Scene {
         );
       } else {
         console.log('[FightScene1] player defended successfully');
+        // Return to idle after dodge/parry commitment ends
+        this.time.delayedCall(
+          Timing.I_FRAME_MS + Timing.COMMIT_DOWNTIME_MS,
+          () => {
+            if (!this.gameOver) this.showPlayerIdle();
+          }
+        );
       }
     };
 
-    // ─── ATTACK RESOLVE (cleanup) ──────────────────────────────
     boss.onAttackResolve = (attackType) => {
       console.log('[FightScene1] onAttackResolve:', attackType);
       this.hideAllHitboxes();
-      this.resetBossPosition();
-
-      if (
-        boss.enemyCombatState !== EnemyState.ATTACKABLE &&
-        boss.enemyCombatState !== EnemyState.DEAD
-      ) {
-        this.bossSprite.setFillStyle(this.bossDefaultColor);
-      }
+      // Don't reset to idle — just snap position back.
+      // The next state (vulnerable/next attack) handles the sprite.
+      this.bossSprite.setFlipX(false);
+      this.bossSprite.clearTint();
+      this.tweens.add({
+        targets: this.bossSprite,
+        x: this.bossBaseX,
+        y: this.bossBaseY,
+        duration: 100,
+        ease: 'Sine.easeOut',
+      });
     };
 
-    // ─── VULNERABLE START ──────────────────────────────────────
     boss.onVulnerableStart = () => {
       console.log('[FightScene1] onVulnerableStart');
-      this.bossSprite.setFillStyle(COLOR_BOSS_VULNERABLE);
+      this.setBossTexture('vulnerable');
+      this.bossSprite.setTint(Tints.VULNERABLE);
       this.statusText.setText('VULNERABLE — ATTACK NOW!');
       this.player.resetWhiffs();
     };
 
-    // ─── VULNERABLE END ────────────────────────────────────────
     boss.onVulnerableEnd = () => {
       console.log(
         '[FightScene1] onVulnerableEnd → post-vulnerable breather:',
         Timing.POST_VULNERABLE_MS,
         'ms'
       );
-      this.bossSprite.setFillStyle(this.bossDefaultColor);
+      this.resetBossPosition();
       this.statusText.setText('Boss recovered.');
-      // Post-vulnerable breather before next combo
       this.scheduleNextBossAction(Timing.POST_VULNERABLE_MS);
     };
 
-    // ─── STAGGER ───────────────────────────────────────────────
     boss.onStagger = () => {
       console.log('[FightScene1] onStagger');
-      this.bossSprite.setFillStyle(COLOR_BOSS_HIT);
+      this.setBossTexture('hit');
+      this.bossSprite.setTint(Tints.HIT);
       this.time.delayedCall(Timing.BOSS_STAGGER_MS, () => {
         if (boss.enemyCombatState === EnemyState.DEAD) return;
         if (boss.enemyCombatState === EnemyState.ATTACKABLE) {
-          this.bossSprite.setFillStyle(COLOR_BOSS_VULNERABLE);
+          this.setBossTexture('vulnerable');
+          this.bossSprite.setTint(Tints.VULNERABLE);
         } else {
-          this.bossSprite.setFillStyle(this.bossDefaultColor);
+          this.setBossTexture('idle');
+          this.bossSprite.clearTint();
         }
       });
     };
@@ -509,19 +575,17 @@ export class FightScene1 extends Phaser.Scene {
     if (boss instanceof EnemyPhase1) {
       boss.onTransform = () => this.transitionToPhase2();
     }
+
     if (boss instanceof EnemyPhase2) {
-      // ─── LAST STAND: boss hits 0 HP → dramatic pause → Supreme ──
       boss.onLastStandStart = () => {
         console.log('[FightScene1] ===== LAST STAND =====');
-        // Cancel any scheduled action
         if (this._nextActionTimer) this._nextActionTimer.remove(false);
         this._nextActionTimer = null;
 
-        // Dramatic flash
-        this.bossSprite.setFillStyle(0xff0000);
+        this.setBossTexture('laststand');
+        this.bossSprite.setTint(Tints.LASTSTAND);
         this.statusText.setText('LAST STAND');
 
-        // Flash boss red/white rapidly
         this.tweens.add({
           targets: this.bossSprite,
           alpha: 0.3,
@@ -530,10 +594,8 @@ export class FightScene1 extends Phaser.Scene {
           repeat: 4,
           onComplete: () => {
             this.bossSprite.setAlpha(1);
-            this.bossSprite.setFillStyle(0x220000);
-            this.bossSprite.setStrokeStyle(3, 0xff0000);
-            this.bossLabel.setText('LAST STAND');
-            // Fire the Supreme after a dramatic beat
+            this.setBossTexture('laststand');
+            this.bossSprite.setTint(Tints.LASTSTAND);
             this.time.delayedCall(Timing.BEAT * 3, () => {
               console.log('[FightScene1] firing Supreme swan song');
               this.boss.atacar(AttackType.SUPREME);
@@ -542,19 +604,18 @@ export class FightScene1 extends Phaser.Scene {
         });
       };
 
-      // ─── After Supreme completes: infinite vulnerable ──────────
       boss.onLastStandVulnerable = () => {
         console.log('[FightScene1] last stand vulnerable — FINISH HIM');
-        this.bossSprite.setFillStyle(COLOR_BOSS_VULNERABLE);
+        this.setBossTexture('vulnerable');
+        this.bossSprite.setTint(Tints.VULNERABLE);
         this.statusText.setText('FINISH HIM!');
         this.player.resetWhiffs();
       };
 
-      // ─── Death scene → Game Won ────────────────────────────────
       boss.onDeathScene = () => {
         console.log('[FightScene1] ===== DEATH SCENE =====');
         this.gameOver = true;
-        this.bossSprite.setFillStyle(0x000000);
+        this.bossSprite.setTint(0x000000);
         this.statusText.setText('');
         this.tweens.killAll();
 
@@ -571,11 +632,10 @@ export class FightScene1 extends Phaser.Scene {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // BOSS AI — uses IDLE_BEFORE_COMBO_MS as default gap
+  // BOSS AI
   // ─────────────────────────────────────────────────────────────
   scheduleNextBossAction(delayMs) {
     console.log('[FightScene1] scheduleNextBossAction in', delayMs, 'ms');
-    // Cancel any existing scheduled action to prevent timer stacking
     if (this._nextActionTimer) {
       this._nextActionTimer.remove(false);
     }
@@ -589,7 +649,7 @@ export class FightScene1 extends Phaser.Scene {
         '[FightScene1] boss chosen attack:',
         next,
         '(phase:',
-        this.boss instanceof EnemyPhase2 ? '2' : '1',
+        this.currentPhase,
         ')'
       );
       this.boss.atacar(next);
@@ -598,15 +658,22 @@ export class FightScene1 extends Phaser.Scene {
 
   transitionToPhase2() {
     console.log('[FightScene1] ===== TRANSITIONING TO PHASE 2 =====');
-    // Cancel any stale timers from Phase 1
     if (this._nextActionTimer) this._nextActionTimer.remove(false);
     this._nextActionTimer = null;
+
+    this.currentPhase = 2;
+    this.bossPrefix = 'boss2';
+
     this.boss = new EnemyPhase2(this);
     this.attachBossHooks(this.boss);
-    this.bossDefaultColor = COLOR_BOSS_PHASE2;
-    this.bossSprite.setFillStyle(this.bossDefaultColor);
-    this.bossSprite.setStrokeStyle(3, 0xff00ff);
-    this.bossLabel.setText('BOSS P2');
+
+    // Swap background
+    this.background.setTexture(Backgrounds.phase2.key);
+
+    // Swap boss sprite
+    this.setBossTexture('idle');
+    this.bossSprite.setTint(Tints.PHASE2);
+
     this.statusText.setText('PHASE 2');
     console.log(
       '[FightScene1] boss is now EnemyPhase2, pool:',
@@ -649,32 +716,45 @@ export class FightScene1 extends Phaser.Scene {
     const bossType = boss.enemyAttackType;
     const bossSt = boss.enemyCombatState;
 
-    // ─── FEINT: immediate punish ──────────────────────────────
+    // FEINT: immediate punish
     if (bossSt === EnemyState.ATTACK && bossType === AttackType.FEINT) {
       if (!this.player.canAct(time)) return;
       this.player.pressedDuringAttack = true;
       this.player.perdeVida(Damage.PLAYER_HIT_TAKES);
+      this.showPlayerStagger();
+      this.time.delayedCall(Timing.PLAYER_STAGGER_MS, () => {
+        if (!this.gameOver) this.showPlayerIdle();
+      });
       this.statusText.setText('FEINT — punished!');
-      this.bossSprite.setFillStyle(this.bossDefaultColor);
+      this.resetBossPosition();
       console.log('[FightScene1] feint punish! vida:', this.player.vida);
       return;
     }
 
-    // ─── During boss ATTACK: record stance + i-frames ─────────
+    // During boss ATTACK: record stance
     if (bossSt === EnemyState.ATTACK) {
       if (key === 'SPACE') {
         this.player.parry(time, boss.enemyTime, bossSt, bossType);
+        this.showPlayerParry();
       } else {
         this.player.desviar(time, key, boss.enemyTime, bossSt, bossType);
+        this.showPlayerDodge(key);
       }
       return;
     }
 
-    // ─── Vulnerable: SPACE = attack ───────────────────────────
+    // Vulnerable: SPACE = attack
     if (key === 'SPACE') {
       const landed = this.player.atacar(time, boss.enemyTime, bossSt);
       if (landed) {
+        this.showPlayerAttack();
         boss.perdeVida();
+        this.time.delayedCall(
+          Timing.I_FRAME_MS + Timing.COMMIT_DOWNTIME_MS,
+          () => {
+            if (!this.gameOver) this.showPlayerIdle();
+          }
+        );
         console.log('[FightScene1] boss hit! vida:', boss.vida);
       } else {
         boss.block();

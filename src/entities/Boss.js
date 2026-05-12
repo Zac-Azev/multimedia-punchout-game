@@ -3,6 +3,7 @@ import {
   AttackType,
   Timing,
   Damage,
+  MashConfig,
 } from '../configs/constants.js';
 
 /**
@@ -150,9 +151,15 @@ export class Boss {
 
     this.onAttackActive?.(attackType);
 
-    // Wait the FULL window before resolving — player presses during it
-    // are recorded as stance + i-frames (handled by scene/player).
-    this._currentTimer = this.scene.time.delayedCall(windowMs, () => {
+    // Impact happens at the STRIKE moment (end of dodge window / squash phase),
+    // not at the end of the full attack window. The remaining time after impact
+    // is visual follow-through before the gap timer.
+    const impactAt =
+      attackType === AttackType.FEINT
+        ? windowMs // feint resolves at end of its full window
+        : windowMs - Timing.DODGE_WINDOW_MS;
+
+    this._currentTimer = this.scene.time.delayedCall(impactAt, () => {
       this._resolveImpact(attackType);
     });
   }
@@ -166,12 +173,14 @@ export class Boss {
     this.onResolveImpact?.(attackType); // scene evaluates + applies damage
     this.onAttackResolve?.(attackType); // hide hitboxes, etc.
 
-    // Reset to IDLE during the gap — prevents _enterAttackable guard from blocking
+    // Reset to IDLE during the gap
     this.enemyCombatState = EnemyState.IDLE;
 
-    // Micro-recovery between hits within a combo
+    // Visual follow-through (DODGE_WINDOW_MS) + micro-recovery gap
+    const followThrough =
+      attackType === AttackType.FEINT ? 0 : Timing.DODGE_WINDOW_MS;
     this._currentTimer = this.scene.time.delayedCall(
-      Timing.POST_ATTACK_GAP_MS,
+      followThrough + Timing.POST_ATTACK_GAP_MS,
       () => {
         this._runNextStep();
       }
@@ -184,6 +193,7 @@ export class Boss {
 
   _onSequenceComplete() {
     this.onSequenceComplete?.(this._comboLandedHits, this._comboTotal);
+    this._vulnerableHits = 0; // reset hit counter for fresh vulnerable window
     this._enterAttackable();
   }
 
@@ -220,12 +230,32 @@ export class Boss {
 
   perdeVida() {
     this.vida = Math.max(0, this.vida - Damage.BOSS_HIT_TAKES);
+    this._vulnerableHits = (this._vulnerableHits || 0) + 1;
     this.enemyCombatState = EnemyState.STAGGER;
     this.enemyTime = this.scene.time.now;
     this.onStagger?.();
 
     if (this.vida <= 0) {
       this._die();
+      return true;
+    }
+
+    // Max hits reached — boss recovers immediately
+    if (this._vulnerableHits >= MashConfig.MAX_HITS_PER_VULNERABLE) {
+      console.log(
+        '[Boss] max hits reached (' + this._vulnerableHits + ') — recovering'
+      );
+      // Cancel the vulnerable timer
+      if (this._currentTimer) {
+        this._currentTimer.remove(false);
+        this._currentTimer = null;
+      }
+      this.scene.time.delayedCall(Timing.BOSS_STAGGER_MS, () => {
+        if (this.enemyCombatState === EnemyState.STAGGER) {
+          this.enemyCombatState = EnemyState.IDLE;
+          this.onVulnerableEnd?.();
+        }
+      });
       return true;
     }
 

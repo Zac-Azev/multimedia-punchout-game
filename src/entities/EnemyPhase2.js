@@ -1,5 +1,11 @@
 import { Boss } from './Boss.js';
-import { AttackType, EnemyState, HP } from '../configs/constants.js';
+import {
+  AttackType,
+  EnemyState,
+  HP,
+  Timing,
+  MashConfig,
+} from '../configs/constants.js';
 
 export class EnemyPhase2 extends Boss {
   constructor(scene) {
@@ -101,7 +107,13 @@ export class EnemyPhase2 extends Boss {
 
     // Normal damage
     this.vida = Math.max(0, this.vida - 1);
-    console.log('[EnemyPhase2] perdeVida → vida:', this.vida);
+    this._vulnerableHits = (this._vulnerableHits || 0) + 1;
+    console.log(
+      '[EnemyPhase2] perdeVida → vida:',
+      this.vida,
+      'hits:',
+      this._vulnerableHits
+    );
 
     if (this.vida <= 0 && !this._isLastStand) {
       // Don't die — enter LAST STAND
@@ -126,7 +138,27 @@ export class EnemyPhase2 extends Boss {
     this.enemyTime = this.scene.time.now;
     this.onStagger?.();
 
-    this.scene.time.delayedCall(800, () => {
+    // Max hits reached — boss recovers immediately
+    if (this._vulnerableHits >= MashConfig.MAX_HITS_PER_VULNERABLE) {
+      console.log(
+        '[EnemyPhase2] max hits reached (' +
+          this._vulnerableHits +
+          ') — recovering'
+      );
+      if (this._currentTimer) {
+        this._currentTimer.remove(false);
+        this._currentTimer = null;
+      }
+      this.scene.time.delayedCall(Timing.BOSS_STAGGER_MS, () => {
+        if (this.enemyCombatState === EnemyState.STAGGER) {
+          this.enemyCombatState = EnemyState.IDLE;
+          this.onVulnerableEnd?.();
+        }
+      });
+      return true;
+    }
+
+    this.scene.time.delayedCall(Timing.BOSS_STAGGER_MS, () => {
       if (this.enemyCombatState === EnemyState.STAGGER) {
         this._enterAttackable();
       }
